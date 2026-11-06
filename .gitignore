@@ -1,3 +1,4 @@
+
 # Prerequisites
 *.d
 
@@ -42,6 +43,11 @@
 build/
 Build/
 build-*/
+
+/build*/
+/data/*.csv
+*.user
+
 
 # CMake generated files
 CMakeFiles/
