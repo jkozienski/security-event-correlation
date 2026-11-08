@@ -94,6 +94,30 @@ void search_tests() {
     check(!correlation::in_history_window(event(1, 0), event(2, max), max), "Future event accepted");
     check(correlation::search_sequential({event(1, 1, {})}, event(2, 1, {})).size() == 1, "Zero features failed");
 }
+void batch_tests() {
+    correlation::GeneratorConfig g;
+    g.history_count = 200; g.query_count = 9; g.feature_count = 3;
+    const auto data = correlation::generate_dataset(g);
+    for (auto mode : {correlation::SearchMode::TopK, correlation::SearchMode::Threshold}) {
+        correlation::SearchConfig c;
+        c.mode = mode; c.k = 7; c.window_seconds = 1000;
+        const auto batch = correlation::search_batch_sequential(data.history, data.queries, c);
+        check(batch.size() == data.queries.size(), "Batch size failed");
+        for (std::size_t i = 0; i < data.queries.size(); ++i) {
+            const auto single = correlation::search_sequential(data.history, data.queries[i], c);
+            check(batch[i].size() == single.size(), "Batch result size differs from single query");
+            for (std::size_t j = 0; j < single.size(); ++j)
+                check(batch[i][j].event_id == single[j].event_id && batch[i][j].score == single[j].score,
+                      "Batch result differs from single query");
+        }
+    }
+    check(correlation::search_batch_sequential(data.history, {}, {}).empty(), "Empty batch failed");
+    check(correlation::search_batch_sequential({}, data.queries, {}).size() == data.queries.size(), "Empty history batch failed");
+    auto bad = data.queries;
+    bad.back().features.pop_back();
+    rejects([&] { correlation::search_batch_sequential(data.history, bad, {}); });
+    rejects([&] { correlation::validate_batch(data.history, data.queries, [] { correlation::SearchConfig c; c.threshold = -0.1; return c; }()); });
+}
 void invalid_tests() {
     const auto q = event(100, 4000);
     rejects([&] { correlation::search_sequential({event(1, 1), event(1, 2)}, q); });
@@ -188,7 +212,7 @@ void generated_tests() {
 }
 int main() {
     try {
-        math_tests(); search_tests(); invalid_tests(); csv_tests(); generated_tests();
+        math_tests(); search_tests(); batch_tests(); invalid_tests(); csv_tests(); generated_tests();
         std::cout << "Passed " << checks << " checks\n";
         return 0;
     } catch (const std::exception& e) {

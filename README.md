@@ -2,8 +2,8 @@
 
 Pierwszy działający etap projektu: C++17, wspólny moduł `common`, powtarzalny
 generator danych i pełny sekwencyjny algorytm referencyjny. Bez zewnętrznych
-bibliotek, Pythona, CUDA i zależności od NVIDIA. OpenMP, MPI oraz OpenCL są
-kolejnymi etapami; ten projekt jeszcze ich nie implementuje.
+bibliotek, Pythona, CUDA i zależności od NVIDIA. OpenMP jest już dostępny
+(opcjonalnie, gdy kompilator go obsługuje); MPI i OpenCL są kolejnymi etapami.
 
 Dokumenty projektu: [CAPSULE.md](CAPSULE.md) opisuje zakres i decyzje techniczne,
 [AGENTS.md](AGENTS.md) — zasady pracy, a [TASKS.md](TASKS.md) — zadania,
@@ -83,7 +83,7 @@ tej nazwy, zgodnie z poleceniami powyżej.
 | Wartość `--backend` | Implementacja | Aktualny stan |
 | --- | --- | --- |
 | `sequential` | Sekwencyjna | Dostępna, domyślna |
-| `openmp` | OpenMP | Jeszcze niedostępna |
+| `openmp` | OpenMP | Dostępna, gdy CMake znalazł OpenMP (`--threads N`, 0 = domyślna liczba wątków) |
 | `mpi` | MPI | Jeszcze niedostępna |
 | `opencl` | OpenCL | Jeszcze niedostępna |
 
@@ -93,7 +93,7 @@ kodem 1 i komunikatem na stderr, przed wczytaniem danych i wypisaniem CSV.
 Program nie zastępuje wybranej implementacji inną.
 
 Argumenty, wczytywanie danych i zapis wyników są wspólne. Moduł `search/`
-wybiera funkcję wyszukiwania o wspólnej sygnaturze `SearchFunction`.
+wybiera funkcję `BatchSearchFunction`, która obsługuje cały zbiór zapytań naraz.
 Po dodaniu kolejnych implementacji ten sam program będzie kierował do nich
 zapytania. Integracja MPI będzie dodatkowo wymagała obsługi uruchamiania
 i współpracy procesów; obecna opcja `mpi` jedynie zgłasza niedostępność.
@@ -223,16 +223,20 @@ oznacza brak wierszy dla danego zapytania, przy zachowaniu nagłówka.
 | `common/src/csv.cpp` | Ścisły odczyt/zapis CSV, pełna precyzja double |
 | `generator/` | `generate_dataset`: historia i oddzielne zapytania |
 | `sequential/` | `search_sequential`: pełna referencja |
-| `search/` | Wspólny interfejs `SearchFunction`, odczyt nazwy i wybór implementacji |
+| `search/` | Wspólny interfejs `BatchSearchFunction`, odczyt nazwy i wybór implementacji |
+| `openmp/` | Wersja OpenMP: zapytania rozdzielone między wątki, historia tylko do odczytu |
 | `apps/main.cpp` | Punkt wejścia programu `main.exe`: argumenty, wybór implementacji, odczyt danych i zapis wyników |
 | `apps/generate_events.cpp` | Punkt wejścia programu `generate_events.exe`: generowanie i zapis danych |
 | `apps/cli.hpp` | Wspólne parsowanie argumentów programów CLI |
 | `tests/` | Automatyczne testy poprawności bez dodatkowego frameworka |
 
 Biblioteki CMake: `common`, `generator`, `sequential`, `search`. Wspólny interfejs
-`SearchFunction` przyjmuje historię (`const std::vector<Event>&`), zapytanie
-(`const Event&`) i konfigurację (`const SearchConfig&`), a zwraca
-`std::vector<Match>`. `parse_backend` zamienia nazwę na `Backend`, a
+`BatchSearchFunction` przyjmuje historię (`const std::vector<Event>&`), cały zbiór
+zapytań, konfigurację i `RunOptions` (np. liczbę wątków) i zwraca wyniki w kolejności
+zapytań (`std::vector<std::vector<Match>>`). Walidacja (`validate_batch`) wykonuje się
+raz na wsad, a rdzeń pojedynczego zapytania (`search_unchecked`) nie waliduje danych
+i jest bezpieczny wielowątkowo. W trybie `top-k` rdzeń trzyma co najwyżej `k`
+kandydatów (kopiec ograniczony), a nie wszystkich z okna czasu.
 `resolve_backend` zwraca funkcję dostępnej implementacji lub zgłasza błąd.
 `similarity` wymaga wcześniejszej walidacji zgodności wymiarów i wag;
 `search_sequential` wykonuje ją automatycznie. `select_matches` zakłada poprawne,
@@ -268,6 +272,10 @@ przykładu w `tests/fixtures`, powtarzalność plików generatora i odrzucanie b
 argumentów. Sprawdza też zgodność jawnego `--backend sequential` z wyborem
 domyślnym w obu trybach, błędy niedostępnych i nieznanych implementacji, brak
 wartości `--backend` oraz opis parametru w pomocy.
+Test `openmp_correctness` (gdy zbudowano OpenMP) porównuje wsad OpenMP z referencją
+bit w bit: identyczne ID, kolejność, czasy i wartości podobieństwa dla obu trybów,
+kilku okien, wartości k, 0–64 wątków, pustych zbiorów i liczby zapytań mniejszej niż
+liczba wątków. Test CLI sprawdza ten sam wynik dla `--backend openmp`.
 Po lokalnej weryfikacji Release (GCC 13.2) oba zestawy przeszły;
 test C++ wykonał 2052 sprawdzenia. Nie jest to wynik benchmarku.
 
