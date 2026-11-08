@@ -35,7 +35,8 @@ generate_events.exe -> history.csv + queries.csv
 main.exe -> argumenty -> CSV -> wybór implementacji -> wyniki CSV
                                 |
                                 +-> sequential (działa)
-                                +-> openmp / mpi / opencl (planowane)
+                                +-> openmp (działa, jeśli OpenMP znaleziony)
+                                +-> mpi / opencl (planowane)
 ```
 
 `apps/main.cpp` jest punktem wejścia wyszukiwania; CMake tworzy `build\main.exe`.
@@ -46,20 +47,23 @@ Domyślnie działa `sequential`. Pozostałe nazwy są rozpoznawane, ale zgłasza
 błąd niedostępności, bez wyników i bez zastępowania ich wersją sekwencyjną.
 
 Publiczne typy są w `common/include/correlation/common.hpp`. Interfejs
-`SearchFunction` w `search/include/correlation/search.hpp` to:
+`BatchSearchFunction` w `search/include/correlation/search.hpp` to:
 
 ```cpp
-std::vector<Match> (*)(
+std::vector<std::vector<Match>> (*)(
     const std::vector<Event>& history,
-    const Event& query,
-    const SearchConfig& config
+    const std::vector<Event>& queries,
+    const SearchConfig& config,
+    const RunOptions& options   // np. threads
 );
 ```
 
-To interfejs dla jednego zapytania, nie gotowy interfejs przetwarzania całego
-zbioru. Przed OpenMP potrzebne będzie wspólne wywołanie dla wielu zapytań;
-przed MPI także określenie inicjalizacji, dystrybucji danych i zbierania wyników.
-Sam wskaźnik funkcji nie obsługuje tych wymagań.
+Jedno wywołanie obsługuje cały zbiór zapytań, a wyniki wracają w kolejności
+zapytań. Zapis CSV wykonuje `main.cpp` jednym wątkiem po zakończeniu obliczeń,
+więc wyjście nie zależy od implementacji. Walidacja jest wspólna
+(`validate_batch` w `sequential/`) i wykonywana jednokrotnie poza mierzonym
+rdzeniem; rdzeń zapytania to `search_unchecked`. Dla MPI nadal trzeba określić
+inicjalizację, dystrybucję danych i zbieranie wyników.
 
 ## Uzgodniony kontrakt danych
 
@@ -159,10 +163,12 @@ Nie pobrano ani nie włączono go do projektu.
 - DOCX proponuje normalizację cech liczbowych, w tym czasu. Obecny model
   używa czasu do okna i remisów; użycie wieku zdarzenia w punktacji byłoby
   zmianą miary, nie poprawką implementacji równoległej.
-- DOCX zakłada podział zapytań w OpenMP. Dzisiejsza pętla w `main.cpp` jest
-  sekwencyjna; planowane API dla wielu zapytań ma umożliwić ten podział.
-- Referencja waliduje historię przy każdym zapytaniu. Trzeba jawnie uwzględnić
-  ten koszt w metodyce pomiarów lub dodać wspólną ścieżkę po jednorazowej
-  walidacji, zachowując publiczną funkcję walidującą.
+- OpenMP dzieli zapytania między wątki (`parallel for`, `schedule(dynamic)`);
+  historia jest tylko do odczytu, każde zapytanie zapisuje wyłącznie własny
+  wynik, więc nie ma blokad. Wynik jest identyczny bitowo z referencją.
+- Wsad waliduje dane raz (`validate_batch`); samo `search_sequential` dla
+  pojedynczego zapytania nadal waliduje je przy każdym wywołaniu. W `main.exe`
+  czas rdzenia obejmuje jeszcze jedną walidację historii na wejściu backendu
+  (stały koszt O(N), jednakowy dla sekwencyjnego i OpenMP); opisz to w metodyce.
 
 Szczegółowe zadania, ich kolejność i odpowiedzialność są wyłącznie w `TASKS.md`.
