@@ -1,0 +1,75 @@
+file(MAKE_DIRECTORY "${WORK}")
+set(launcher "${MPIEXEC}" "${NUMPROC_FLAG}" "${PROCESSES}" ${PREFLAGS})
+
+function(compare_with_reference name)
+  execute_process(COMMAND "${SEARCH}" --backend sequential ${ARGN}
+    RESULT_VARIABLE code OUTPUT_VARIABLE expected ERROR_VARIABLE error TIMEOUT 20)
+  if(NOT code STREQUAL "0")
+    message(FATAL_ERROR "${name}: sequential reference failed (${code}): ${error}")
+  endif()
+  execute_process(COMMAND ${launcher} "${SEARCH}" ${POSTFLAGS} --backend mpi --timing 1 ${ARGN}
+    RESULT_VARIABLE code OUTPUT_VARIABLE output ERROR_VARIABLE error TIMEOUT 20)
+  if(NOT code STREQUAL "0")
+    message(FATAL_ERROR "${name}: MPI failed (${code}): ${error}")
+  endif()
+  if(NOT output STREQUAL expected)
+    message(FATAL_ERROR "${name}: MPI CSV differs from the sequential reference")
+  endif()
+  string(REGEX MATCHALL "backend=mpi [^\r\n]*processes=${PROCESSES} " timing "${error}")
+  list(LENGTH timing timing_count)
+  if(NOT timing_count EQUAL 1)
+    message(FATAL_ERROR "${name}: expected timing from exactly one rank with ${PROCESSES} processes: ${error}")
+  endif()
+endfunction()
+
+function(expect_mpi_error expected)
+  execute_process(COMMAND ${launcher} "${SEARCH}" ${POSTFLAGS} --backend mpi ${ARGN}
+    RESULT_VARIABLE code OUTPUT_VARIABLE output ERROR_VARIABLE error TIMEOUT 20)
+  string(REGEX MATCHALL "Error: ${expected}" messages "${error}")
+  list(LENGTH messages message_count)
+  if(NOT code MATCHES "^[1-9][0-9]*$" OR NOT output STREQUAL "" OR NOT message_count EQUAL 1)
+    message(FATAL_ERROR "Expected one MPI error and no CSV for '${expected}' (${code}): ${error}")
+  endif()
+endfunction()
+
+set(fixture --history "${FIXTURES}/history.csv" --queries "${FIXTURES}/queries.csv")
+compare_with_reference("window boundary and unordered history" ${fixture} --mode top-k --k 3)
+compare_with_reference("inclusive threshold and ignored k" ${fixture} --mode threshold --threshold 0.75 --k 0)
+compare_with_reference("empty top-k" ${fixture} --k 0)
+
+set(history "${WORK}/history.csv")
+set(queries "${WORK}/queries.csv")
+execute_process(COMMAND "${GENERATE}" --history "${history}" --queries "${queries}"
+  --count 121 --query-count 7 --features 6 --seed 1337
+  RESULT_VARIABLE code ERROR_VARIABLE error)
+if(NOT code STREQUAL "0")
+  message(FATAL_ERROR "Data generation failed (${code}): ${error}")
+endif()
+set(generated --history "${history}" --queries "${queries}")
+compare_with_reference("uneven split and more k than candidates" ${generated} --k 200 --window 15
+  --weight-numeric 0.375 --weight-source 3)
+compare_with_reference("batch threshold across ranks" ${generated} --mode threshold --threshold 0.35
+  --weight-device 0.25 --weight-operation 4 --window 200)
+compare_with_reference("no candidate in window" ${generated} --window 0)
+
+set(no_features "id,timestamp,operation_id,device_id,account_id,source_id,destination_id\n")
+set(edge_history "${WORK}/edge-history.csv")
+set(edge_queries "${WORK}/edge-queries.csv")
+file(WRITE "${edge_history}" "${no_features}18446744073709551615,18446744073709551615,4294967295,0,0,0,0\n3,18446744073709551615,4294967295,0,0,0,0\n2,18446744073709551615,4294967295,0,0,0,0\n")
+file(WRITE "${edge_queries}" "${no_features}18446744073709551615,18446744073709551615,4294967295,0,0,0,0\n")
+set(edge --history "${edge_history}" --queries "${edge_queries}" --window 0)
+compare_with_reference("tie across shards and self-exclusion" ${edge} --k 1)
+compare_with_reference("exact threshold and zero features" ${edge} --mode threshold --threshold 1)
+
+set(empty "${WORK}/empty.csv")
+set(single "${WORK}/single.csv")
+file(WRITE "${empty}" "${no_features}")
+file(WRITE "${single}" "${no_features}2,18446744073709551615,4294967295,0,0,0,0\n")
+compare_with_reference("empty shards" --history "${single}" --queries "${edge_queries}" --k 5)
+compare_with_reference("empty history" --history "${empty}" --queries "${queries}")
+compare_with_reference("empty query set" --history "${history}" --queries "${empty}" --mode threshold)
+compare_with_reference("both datasets empty" --history "${empty}" --queries "${empty}")
+
+expect_mpi_error("Cannot open input files" --history "${WORK}/missing.csv" --queries "${queries}")
+expect_mpi_error("Inconsistent feature count" --history "${history}" --queries "${edge_queries}")
+expect_mpi_error("Threshold must be in" ${generated} --threshold 2)

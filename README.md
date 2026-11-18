@@ -1,9 +1,8 @@
 # Event Correlation — korelacja podobnych zdarzeń bezpieczeństwa
 
-Pierwszy działający etap projektu: C++17, wspólny moduł `common`, powtarzalny
-generator danych i pełny sekwencyjny algorytm referencyjny. Bez zewnętrznych
-bibliotek, Pythona, CUDA i zależności od NVIDIA. OpenMP jest już dostępny
-(opcjonalnie, gdy kompilator go obsługuje); MPI i OpenCL są kolejnymi etapami.
+Projekt C++17 zawiera wspólny moduł `common`, powtarzalny generator danych
+i pełny sekwencyjny algorytm referencyjny. OpenMP i MPI są opcjonalnymi
+backendami wykrywanymi podczas konfiguracji CMake. OpenCL jest planowany.
 
 Dokumenty projektu: [CAPSULE.md](CAPSULE.md) opisuje zakres i decyzje techniczne,
 [AGENTS.md](AGENTS.md) — zasady pracy, a [TASKS.md](TASKS.md) — zadania,
@@ -114,7 +113,7 @@ tej nazwy, zgodnie z poleceniami powyżej.
 | --- | --- | --- |
 | `sequential` | Sekwencyjna | Dostępna, domyślna |
 | `openmp` | OpenMP | Dostępna, gdy CMake znalazł OpenMP (`--threads N`, 0 = domyślna liczba wątków) |
-| `mpi` | MPI | Jeszcze niedostępna |
+| `mpi` | MPI | Dostępna, gdy CMake znalazł MPI |
 | `opencl` | OpenCL | Jeszcze niedostępna |
 
 Pominięcie `--backend` oznacza `sequential`, więc wcześniejsze polecenia nadal
@@ -124,10 +123,49 @@ Program nie zastępuje wybranej implementacji inną.
 
 Argumenty, wczytywanie danych i zapis wyników są wspólne. Moduł `search/`
 wybiera funkcję `BatchSearchFunction`, która obsługuje cały zbiór zapytań naraz.
-Po dodaniu kolejnych implementacji ten sam program będzie kierował do nich
-zapytania. Integracja MPI będzie dodatkowo wymagała obsługi uruchamiania
-i współpracy procesów; obecna opcja `mpi` jedynie zgłasza niedostępność.
-Generator danych pozostaje osobnym programem `generate_events.exe`.
+Generator danych jest osobnym programem `generate_events.exe`.
+
+### Uruchamianie MPI
+
+CMake szuka biblioteki MPI dla kompilatora C++ i sprawdza obsługę
+`MPI_UINT64_T` oraz `MPI_Type_create_resized`. Do uruchamiania
+wieloprocesowego potrzebny jest też `mpiexec`. W Ubuntu pakiety `g++`,
+`cmake`, `ninja-build`, `libopenmpi-dev` i `openmpi-bin` zapewniają potrzebne
+narzędzia. W Linuksie lub WSL z Open MPI uruchom poniższe polecenia w katalogu
+projektu.
+
+```sh
+cmake -S . -B build-mpi -G Ninja -DCMAKE_BUILD_TYPE=Release -DCORRELATION_ENABLE_MPI=ON
+cmake --build build-mpi
+ctest --test-dir build-mpi --output-on-failure
+mpiexec -n 4 ./build-mpi/main --backend mpi --history tests/fixtures/history.csv --queries tests/fixtures/queries.csv --mode top-k --k 3
+```
+
+Na Windowsie zainstaluj Microsoft MPI Runtime (`msmpisetup.exe`) i SDK
+(`msmpisdk.msi`). Otwórz nowy PowerShell po instalacji i wykonaj polecenia
+w katalogu projektu z 64-bitowym MinGW, CMake i Ninja dostępnymi w `PATH`.
+
+```powershell
+cmake -S . -B build-mpi-win-mingw -G Ninja -DCMAKE_BUILD_TYPE=Release -DCORRELATION_ENABLE_MPI=ON
+cmake --build build-mpi-win-mingw
+ctest --test-dir build-mpi-win-mingw --output-on-failure
+$mpiExec = Join-Path $env:ProgramFiles 'Microsoft MPI/Bin/mpiexec.exe'
+& $mpiExec -n 4 .\build-mpi-win-mingw\main.exe --backend mpi --history tests\fixtures\history.csv --queries tests\fixtures\queries.csv --mode top-k --k 3
+```
+
+Liczbę procesów ustawia `mpiexec -n`. Przełącznik `--threads` dotyczy OpenMP.
+Ranga 0 wczytuje historię i zapytania oraz wypisuje jeden CSV, także w trybie
+`threshold`. W kodzie C++ nagłówek `correlation/mpi.hpp` udostępnia
+`MpiSession` i `search_batch_mpi`. Funkcję wywołują wszystkie rangi wybranego
+komunikatora MPI, a dane wejściowe i wynik należą do jego rangi 0.
+Testy `mpi_correctness_1` i `mpi_correctness_2` są rejestrowane, gdy CMake
+znajdzie bibliotekę i program uruchamiający MPI. Aby budować bez MPI,
+ustaw `-DCORRELATION_ENABLE_MPI=OFF`.
+
+`--timing 1` dla MPI wypisuje na stderr liczbę procesów i czasy z rangi 0.
+`core_seconds` obejmuje walidację wsadu, dystrybucję, obliczenia i scalanie.
+`total_seconds` obejmuje także inicjalizację i operacje CSV, a kończy się
+przed finalizacją MPI. Program `benchmark` obsługuje wersje sekwencyjną i OpenMP.
 
 ## Pola struktury Event
 
@@ -255,6 +293,7 @@ oznacza brak wierszy dla danego zapytania, przy zachowaniu nagłówka.
 | `sequential/` | `search_sequential`: pełna referencja |
 | `search/` | Wspólny interfejs `BatchSearchFunction`, odczyt nazwy i wybór implementacji |
 | `openmp/` | Wersja OpenMP: zapytania rozdzielone między wątki, historia tylko do odczytu |
+| `mpi/` | Wersja MPI: podział historii między procesy, rozgłaszanie zapytań i scalanie wyników |
 | `apps/main.cpp` | Punkt wejścia programu `main.exe`: argumenty, wybór implementacji, odczyt danych i zapis wyników |
 | `apps/generate_events.cpp` | Punkt wejścia programu `generate_events.exe`: generowanie i zapis danych |
 | `apps/cli.hpp` | Wspólne parsowanie argumentów programów CLI |
@@ -274,10 +313,11 @@ skończone wyniki i zwalidowaną konfigurację. Opcjonalna selekcja kandydatów
 powinna stanowić osobny moduł; nie zmieniaj nią pełnej referencji.
 
 Referencja przegląda całą historię bez założenia jej posortowania. Dla H zdarzeń,
-D cech oraz M zdarzeń w oknie koszt porównań to O(H*(D+1)); top-k używa
-`partial_sort` (O(M log(k+1))), tryb progu sortuje dopasowania. Pamięć dodatkowa
-to O(H+M), w tym zbiór ID do walidacji. Każde zapytanie ponownie waliduje historię;
-uwzględnij to przy przyszłym projektowaniu pomiarów czasu obliczeń.
+D cech i M kandydatów w oknie koszt filtrowania i punktowania zapytania wynosi
+O(H + M(D+1)). Kopiec `top-k` mieści najwyżej `k` dopasowań, a tryb progu
+sortuje wszystkie dopasowania, które przeszły próg. W MPI każda ranga stosuje
+ten rdzeń do swojej części historii. Ranga 0 używa `partial_sort` do wybrania
+globalnego `top-k` z lokalnych list.
 
 Generator używa `std::mt19937`, jawnego mapowania liczb i ośmiu powracających
 profili zdarzeń z szumem liczbowym. Parametry `--start`, `--step`, `--features`

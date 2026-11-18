@@ -36,15 +36,16 @@ main.exe -> argumenty -> CSV -> wybór implementacji -> wyniki CSV
                                 |
                                 +-> sequential (działa)
                                 +-> openmp (działa, jeśli OpenMP znaleziony)
-                                +-> mpi / opencl (planowane)
+                                +-> mpi (działa, jeśli MPI znaleziony)
+                                +-> opencl (planowany)
 ```
 
 `apps/main.cpp` jest punktem wejścia wyszukiwania; CMake tworzy `build\main.exe`.
 Generator ma osobny punkt wejścia `apps/generate_events.cpp` i program
 `build\generate_events.exe`. Wybór implementacji odbywa się przez
 `--backend sequential|openmp|mpi|opencl`, a trybu przez `--mode top-k|threshold`.
-Domyślnie działa `sequential`. Pozostałe nazwy są rozpoznawane, ale zgłaszają
-błąd niedostępności, bez wyników i bez zastępowania ich wersją sekwencyjną.
+Domyślnie działa `sequential`. Wybranie niedostępnej implementacji kończy
+program błędem przed odczytem danych.
 
 Publiczne typy są w `common/include/correlation/common.hpp`. Interfejs
 `BatchSearchFunction` w `search/include/correlation/search.hpp` to:
@@ -59,11 +60,29 @@ std::vector<std::vector<Match>> (*)(
 ```
 
 Jedno wywołanie obsługuje cały zbiór zapytań, a wyniki wracają w kolejności
-zapytań. Zapis CSV wykonuje `main.cpp` jednym wątkiem po zakończeniu obliczeń,
-więc wyjście nie zależy od implementacji. Walidacja jest wspólna
-(`validate_batch` w `sequential/`) i wykonywana jednokrotnie poza mierzonym
-rdzeniem; rdzeń zapytania to `search_unchecked`. Dla MPI nadal trzeba określić
-inicjalizację, dystrybucję danych i zbieranie wyników.
+zapytań. Zapis CSV wykonuje `main.cpp` po zakończeniu obliczeń. Wspólna
+walidacja to `validate_batch`, a rdzeń zapytania to `search_unchecked`.
+
+Dla `--backend mpi` program używa `MpiSession` do inicjalizacji i finalizacji
+MPI. Wszystkie rangi wywołują backend. Ranga 0 jako jedyna czyta CSV,
+udostępnia dane wejściowe i zapisuje wynik. Backend waliduje cały wsad na
+randze 0, rozgłasza zapytania i
+konfigurację, a historię dzieli na rozłączne, możliwie równe fragmenty. Pola
+zdarzeń i cechy są przesyłane jako wartości liczbowe MPI, a dopasowania mają
+typ MPI zachowujący pola `Match` i precyzję `double`. Każda ranga liczy wyniki na
+własnym fragmencie tym samym rdzeniem co referencja. Ranga 0 wybiera globalne
+`top-k` z lokalnych list po maksymalnie `k` dopasowań. W trybie `threshold`
+zbiera i sortuje wszystkie dopasowania. Przy jednej randze ten sam rdzeń
+przeszukuje całą historię lokalnie. Ranga 0 trzyma pełną wczytaną historię
+i wszystkie końcowe wyniki, co trzeba uwzględnić przy pomiarach pamięci.
+Podział historii, wyszukiwanie, scalanie i obsługa komunikacji są w
+`mpi/src/mpi.cpp`. Nagłówek `correlation/mpi.hpp` udostępnia `MpiSession`
+oraz `search_batch_mpi`. Wywołanie C++ jest kolektywne w wybranym
+intrakomunikatorze. Ranga 0 tego komunikatora dostarcza dane i konfigurację
+oraz otrzymuje wyniki. CLI używa `MPI_COMM_WORLD`.
+CMake sprawdza możliwość kompilacji i linkowania wymaganych typów MPI.
+Nagłówek Microsoft MPI zgłasza wersję MPI 2.0 i udostępnia używane przez backend
+`MPI_UINT64_T` oraz `MPI_Type_create_resized`.
 
 ## Uzgodniony kontrakt danych
 
@@ -154,8 +173,7 @@ Nie pobrano ani nie włączono go do projektu.
 
 - Generator ma osiem powracających profili z szumem, ale nie zapisuje etykiet
   serii i nie wydziela jawnego tła. Same profile nie są ground truth.
-- Jest jedna działająca implementacja, a nie cztery. Opcje CLI pozostałych
-  implementacji nie oznaczają gotowych algorytmów.
+- Działają wersje sekwencyjna, OpenMP i MPI. OpenCL pozostaje do zrobienia.
 - Jest podstawowy moduł pomiarów (`benchmarks/`) dla wersji sekwencyjnej i OpenMP.
   Nie ma jeszcze pomiarów P95, pamięci, jakości (precision/recall), MPI/OpenCL ani raportu.
 - DOCX mówi o zdarzeniach „wcześniejszych”; kod dopuszcza też równe czasy.
@@ -167,9 +185,10 @@ Nie pobrano ani nie włączono go do projektu.
 - OpenMP dzieli zapytania między wątki (`parallel for`, `schedule(dynamic)`);
   historia jest tylko do odczytu, każde zapytanie zapisuje wyłącznie własny
   wynik, więc nie ma blokad. Wynik jest identyczny bitowo z referencją.
-- Wsad waliduje dane raz (`validate_batch`); samo `search_sequential` dla
-  pojedynczego zapytania nadal waliduje je przy każdym wywołaniu. W `main.exe`
-  czas rdzenia obejmuje jeszcze jedną walidację historii na wejściu backendu
-  (stały koszt O(N), jednakowy dla sekwencyjnego i OpenMP); opisz to w metodyce.
+- W `main.exe` wersje sekwencyjna i OpenMP walidują wsad przed pomiarem i
+  ponownie na wejściu backendu. MPI waliduje wsad na randze 0 na wejściu
+  backendu. `core_seconds` obejmuje pracę backendu, w tym dystrybucję i scalanie
+  w MPI. `total_seconds` MPI obejmuje dodatkowo inicjalizację MPI oraz odczyt i
+  zapis CSV. Pomiar kończy się przed `MPI_Finalize`.
 
 Szczegółowe zadania, ich kolejność i odpowiedzialność są wyłącznie w `TASKS.md`.

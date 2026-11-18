@@ -6,11 +6,12 @@ namespace correlation {
 enum class Backend { Sequential, OpenMP, MPI, OpenCL };
 
 struct RunOptions {
-    int threads = 0; // OpenMP: 0 = runtime default; ignored by sequential
+    int threads = 0; // OpenMP: 0 = runtime default
 };
 
-// One call answers a whole query set: validation happens once, results come back in
-// input query order, and the caller (not the backend) writes the output.
+// One call answers a whole query set in input order. With MPI, every process in
+// MPI_COMM_WORLD calls the function after MPI_Init. Only rank 0 provides input
+// and receives results. The caller writes the output.
 using BatchSearchFunction = std::vector<std::vector<Match>> (*)(
     const std::vector<Event>& history, const std::vector<Event>& queries,
     const SearchConfig& config, const RunOptions& options);

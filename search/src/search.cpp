@@ -3,11 +3,26 @@
 #ifdef CORRELATION_HAS_OPENMP
 #include "correlation/openmp.hpp"
 #endif
+#ifdef CORRELATION_HAS_MPI
+#include "correlation/mpi.hpp"
+#endif
 #include <stdexcept>
 #include <string>
 
 namespace correlation {
 namespace {
+std::runtime_error unavailable(const char* backend, const char* reason) {
+    std::string available = "sequential";
+#ifdef CORRELATION_HAS_OPENMP
+    available += ", openmp";
+#endif
+#ifdef CORRELATION_HAS_MPI
+    available += ", mpi";
+#endif
+    return std::runtime_error(std::string("Backend ") + backend + " is not available: " + reason
+                              + ". Available backend: " + available + ".");
+}
+
 std::vector<std::vector<Match>> run_sequential(const std::vector<Event>& history,
                                                const std::vector<Event>& queries,
                                                const SearchConfig& config, const RunOptions&) {
@@ -18,6 +33,13 @@ std::vector<std::vector<Match>> run_openmp(const std::vector<Event>& history,
                                            const std::vector<Event>& queries,
                                            const SearchConfig& config, const RunOptions& options) {
     return search_batch_openmp(history, queries, config, options.threads);
+}
+#endif
+#ifdef CORRELATION_HAS_MPI
+std::vector<std::vector<Match>> run_mpi(const std::vector<Event>& history,
+                                       const std::vector<Event>& queries,
+                                       const SearchConfig& config, const RunOptions&) {
+    return search_batch_mpi(history, queries, config);
 }
 #endif
 }
@@ -39,20 +61,16 @@ BatchSearchFunction resolve_backend(Backend backend) {
 #ifdef CORRELATION_HAS_OPENMP
         return &run_openmp;
 #else
-        throw std::runtime_error("Backend openmp is not available: this build has no OpenMP support. Available backend: sequential.");
+        throw unavailable("openmp", "this build has no OpenMP support");
 #endif
     case Backend::MPI:
-        throw std::runtime_error("Backend mpi is not available: implementation not yet added. Available backend: sequential"
-#ifdef CORRELATION_HAS_OPENMP
-                                 ", openmp"
+#ifdef CORRELATION_HAS_MPI
+        return &run_mpi;
+#else
+        throw unavailable("mpi", "this build has no MPI support");
 #endif
-                                 ".");
     case Backend::OpenCL:
-        throw std::runtime_error("Backend opencl is not available: implementation not yet added. Available backend: sequential"
-#ifdef CORRELATION_HAS_OPENMP
-                                 ", openmp"
-#endif
-                                 ".");
+        throw unavailable("opencl", "implementation not yet added");
     }
     throw std::invalid_argument("Invalid backend value");
 }
