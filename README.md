@@ -70,6 +70,36 @@ Generator wymaga istniejących katalogów docelowych; pliki historii i zapytań
 muszą być różne. Domyślne ścieżki obu programów to `history.csv` i `queries.csv`
 w bieżącym katalogu. W przykładzie powyżej ścieżki do `data/` podano jawnie.
 
+## Pomiary wydajności (sekwencyjna i OpenMP)
+
+Program `benchmark` (`benchmarks/benchmark.cpp`) generuje dane (`--seed`, domyślnie
+1337), a potem mierzy referencję sekwencyjną i OpenMP dla podanych liczb wątków.
+Każdy pomiar sprawdza zgodność wyniku z referencją co do bitu. Wykonuje rozgrzewkę
+i co najmniej 5 pomiarów, w kolejności przeplatanej (pętla po powtórzeniach na
+zewnątrz), żeby dryf obciążenia nie fałszował jednej konfiguracji.
+
+```cmd
+build\benchmark.exe --history 200000 --queries 2000 --threads 1,2,4,6,8,12 --repeats 7 --output wyniki.csv --note "CPU, system"
+python benchmarks\plot_speedup.py wyniki.csv
+```
+
+Skrypt wykresów wymaga tylko `matplotlib`. Zapisuje `wyniki_summary.csv` oraz
+`wyniki_plots.png` (czas, S(p), E(p)). Plik `wyniki.csv.meta.txt` zawiera
+konfigurację (kompilator, zmienne OMP, parametry danych). Definicje czasów:
+
+| Kolumna | Zakres |
+| --- | --- |
+| `read_s` | Parsowanie historii i zapytań z tekstu CSV (w pamięci, bez dysku) |
+| `core_s` | Jedno wywołanie backendu dla wszystkich zapytań; zawiera jego własną walidację historii (stały koszt O(N), taki sam dla obu wersji) |
+| `validate_s` | `validate_batch` osobno (już wliczone w `core_s`) |
+| `write_s` | Zapis wszystkich dopasowań jako CSV (w pamięci) |
+| `total_s` | `read_s + core_s + write_s` |
+
+`S(p) = T_openmp(1) / T_openmp(p)` (ta sama metoda, jeden wątek jako baza);
+przyspieszenie względem referencji sekwencyjnej jest w osobnej kolumnie.
+Rozrzut to minimum–maksimum. Uruchomienie na jednym komputerze nie mówi nic
+o skalowalności klastra. Surowe wyniki są w `benchmarks/results/`.
+
 ## Wybór implementacji wyszukiwania
 
 Wyszukiwanie uruchamia się jednym programem `main.exe`. Parametr

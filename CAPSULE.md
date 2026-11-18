@@ -156,7 +156,8 @@ Nie pobrano ani nie włączono go do projektu.
   serii i nie wydziela jawnego tła. Same profile nie są ground truth.
 - Jest jedna działająca implementacja, a nie cztery. Opcje CLI pozostałych
   implementacji nie oznaczają gotowych algorytmów.
-- Nie ma jeszcze modułu eksperymentów, pomiarów P95, jakości ani raportu.
+- Jest podstawowy moduł pomiarów (`benchmarks/`) dla wersji sekwencyjnej i OpenMP.
+  Nie ma jeszcze pomiarów P95, pamięci, jakości (precision/recall), MPI/OpenCL ani raportu.
 - DOCX mówi o zdarzeniach „wcześniejszych”; kod dopuszcza też równe czasy.
   To jawna obecna decyzja. Nie przechodź na ścisłe `<` bez aktualizacji
   kontraktu i testów.

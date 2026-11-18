@@ -1,0 +1,26 @@
+compiler=15.2.0
+build_type=Release
+openmp_version_macro=201511
+os=Linux
+hardware_concurrency=12
+OMP_NUM_THREADS=(unset)
+OMP_PROC_BIND=(unset)
+OMP_PLACES=(unset)
+OMP_SCHEDULE=(unset)
+history=200000
+queries=2000
+features=4
+seed=1337
+mode=top-k
+k=10
+threshold=0.8
+window_seconds=1000000000
+repeats=7
+warmup=1
+threads=1,2,4,6,8,12
+note=Intel Core i5-10400F (6 cores / 12 threads), WSL2 Ubuntu, g++ 15.2.0, Release; no other heavy load during the run (note corrected by hand, the original value was cut by shell quoting)
+# Times use std::chrono::steady_clock and in-memory CSV streams.
+# core_s = one backend call for the whole query set; it includes the backend's own
+#   validation of the history (constant O(N) cost, the same for every backend).
+# validate_s = validate_batch alone, measured separately (already inside core_s).
+# total_s = read_s + core_s + write_s.
